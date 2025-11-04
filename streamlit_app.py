@@ -2,6 +2,7 @@ import streamlit as st
 from openai import OpenAI
 import json
 from datetime import datetime
+import os
 
 # 页面配置
 st.set_page_config(
@@ -10,8 +11,36 @@ st.set_page_config(
     layout="wide"
 )
 
-# 消防专业系统提示词
-SYSTEM_PROMPT = """You are an AI consultant specializing in Community Risk Assessment (CRA) for fire departments. Your role is three-fold:
+# 读取知识库文件
+@st.cache_data
+def load_knowledge_base():
+    """加载消防知识库"""
+    try:
+        # 尝试从同目录读取
+        if os.path.exists("fire_knowledge_base.md"):
+            with open("fire_knowledge_base.md", "r", encoding="utf-8") as f:
+                return f.read()
+        else:
+            return """
+## Knowledge Base Not Found
+
+Using built-in knowledge. For enhanced capabilities, upload fire_knowledge_base.md to the repository.
+
+### Basic Knowledge:
+- OFIRMS: Ohio Fire Information Reporting Management System
+- SVI: Social Vulnerability Index from CDC
+- NFIRS: National Fire Incident Reporting System
+- Always consider: population demographics, housing age, response times, mutual aid capabilities
+"""
+    except Exception as e:
+        st.sidebar.warning(f"Knowledge base loading issue: {str(e)}")
+        return "Using built-in knowledge only."
+
+# 加载知识库
+KNOWLEDGE_BASE = load_knowledge_base()
+
+# 消防专业系统提示词（集成知识库）
+SYSTEM_PROMPT = f"""You are an AI consultant specializing in Community Risk Assessment (CRA) for fire departments. Your role is three-fold:
 
 1. ASSESSMENT CONDUCTOR: Guide fire chiefs and officers through systematic risk identification using conversational interviews.
 
@@ -42,10 +71,26 @@ Tailor your approach based on department type:
 - Suburban: Balance residential risks with commercial and industrial considerations
 - Volunteer Departments: Consider resource limitations, response time challenges, training needs
 
+---
+
+REFERENCE KNOWLEDGE BASE:
+
+{KNOWLEDGE_BASE}
+
+---
+
+Use the knowledge base above to:
+- Reference specific incidents and lessons learned
+- Explain data sources and how to access them
+- Highlight risk factor interconnections
+- Suggest relevant questions based on community type
+- Mention emerging trends when appropriate
+- Cite recent research when relevant
+
 CONVERSATION FLOW:
 1. Start by learning about the user (name, role, department type, location, community characteristics)
 2. Progressively build understanding through targeted questions
-3. Share relevant examples from similar communities when appropriate
+3. Share relevant examples from the knowledge base when appropriate
 4. Explain how risk factors compound and interconnect
 5. Validate findings with the user throughout the process
 
@@ -63,6 +108,7 @@ This AI consultant helps fire departments conduct comprehensive Community Risk A
 - 📊 Explaining data sources and their relevance  
 - 🧠 Teaching risk analysis methodologies
 - 💡 Providing insights from similar communities
+- 📚 Leveraging up-to-date fire service knowledge
 """)
 
 st.markdown("---")
@@ -106,6 +152,22 @@ with st.sidebar:
     # 显示对话 ID
     st.caption(f"Session: {st.session_state.conversation_id}")
     
+    # 知识库状态
+    if "fire_knowledge_base.md" in KNOWLEDGE_BASE or len(KNOWLEDGE_BASE) > 500:
+        st.success("✅ Knowledge Base: Loaded")
+        with st.expander("📚 View Knowledge Base Summary"):
+            # 显示知识库摘要
+            lines = KNOWLEDGE_BASE.split('\n')
+            headers = [line for line in lines if line.startswith('##')]
+            st.markdown("**Available Topics:**")
+            for header in headers[:15]:  # 显示前15个主题
+                st.caption(header)
+    else:
+        st.warning("⚠️ Knowledge Base: Basic mode")
+        st.caption("Upload fire_knowledge_base.md for enhanced features")
+    
+    st.markdown("---")
+    
     # 显示用户信息
     if st.session_state.user_info:
         st.subheader("👤 User Profile")
@@ -145,7 +207,8 @@ with st.sidebar:
                 "timestamp": datetime.now().isoformat(),
                 "user_info": st.session_state.user_info,
                 "messages": st.session_state.messages,
-                "message_count": len(st.session_state.messages)
+                "message_count": len(st.session_state.messages),
+                "knowledge_base_used": "Yes" if len(KNOWLEDGE_BASE) > 500 else "Basic"
             }
             
             st.download_button(
@@ -182,12 +245,12 @@ Create a professional CRA report in markdown format with these sections:
 7. Key Recommendations
 8. Next Steps
 
-Make it actionable and professional."""
+Reference relevant information from the knowledge base when applicable. Make it actionable and professional."""
 
                     response = client.chat.completions.create(
                         model="gpt-4",
                         messages=[
-                            {"role": "system", "content": "You are an expert in creating Community Risk Assessment reports for fire departments."},
+                            {"role": "system", "content": f"You are an expert in creating Community Risk Assessment reports for fire departments. Use this knowledge base for context:\n\n{KNOWLEDGE_BASE[:3000]}"},
                             {"role": "user", "content": report_prompt}
                         ],
                         temperature=0.7
@@ -226,11 +289,31 @@ Make it actionable and professional."""
         - Be specific about your community
         - Share local challenges
         - Ask for explanations anytime
+        - Bot uses knowledge base for insights
         
         **Features:**
         - Auto-saves conversation
         - Generates final CRA report
+        - References recent incidents & research
         - Educational throughout
+        """)
+    
+    # 知识库更新提示
+    with st.expander("🔄 Update Knowledge Base"):
+        st.markdown("""
+        **To add new resources:**
+        
+        1. Edit `fire_knowledge_base.md` in GitHub
+        2. Add new incidents, research, or data sources
+        3. Commit changes
+        4. App will auto-reload with new knowledge
+        
+        **What to include:**
+        - Recent incident lessons learned
+        - New research findings
+        - Updated data sources
+        - Emerging trends
+        - Best practices from similar departments
         """)
 
 # 主对话区域
@@ -280,12 +363,5 @@ if prompt := st.chat_input("Type your message here...", key="chat_input"):
 
 # 页脚
 st.markdown("---")
-st.caption("🚒 AI-Enhanced Community Risk Assessment | Developed for Fire Service Professionals")
-st.caption("💡 This bot educates while assessing - each conversation helps you learn systematic risk analysis methods")
-
-
-
-
-
-
-
+st.caption("🚒 AI-Enhanced Community Risk Assessment | Powered by Knowledge Base")
+st.caption("💡 This bot uses curated fire service knowledge to provide relevant, up-to-date guidance")
