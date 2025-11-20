@@ -10,13 +10,8 @@ st.set_page_config(
     layout="wide"
 )
 
-# ============================================
-# KEY CHANGE: Read OpenAI API key from Streamlit Secrets
-# Users don't need to input any API key
-# ============================================
-
+# Read OpenAI API key from Streamlit Secrets
 try:
-    # Read OpenAI API key from Secrets
     openai_api_key = st.secrets["OPENAI_API_KEY"]
     client = OpenAI(api_key=openai_api_key)
     api_configured = True
@@ -69,6 +64,68 @@ TONE: Professional, educational, consultative - like an experienced peer mentor 
 
 Remember: This is NOT just data collection - you're teaching systematic risk analysis while conducting the assessment. Users should leave with enhanced analytical skills they can apply ongoing."""
 
+# Function to generate simplified CRA report
+def generate_cra_report(conversation_history):
+    """Generate a concise Community Risk Assessment report"""
+    
+    # Build conversation summary
+    conversation_text = "\n\n".join([
+        f"{msg['role'].upper()}: {msg['content']}" 
+        for msg in conversation_history
+    ])
+    
+    # Create simplified prompt for report generation
+    report_prompt = f"""Based on the following conversation with a fire department officer, create a concise Community Risk Assessment (CRA) report.
+
+CONVERSATION:
+{conversation_text}
+
+Create a professional but concise CRA report in markdown format with these sections:
+
+# Community Risk Assessment Report
+
+## Department & Community Overview
+- Department name, location, and type
+- Community characteristics
+- Key demographics or geographic features mentioned
+
+## Identified Risks & Concerns
+- List all risks discussed (with priority if mentioned)
+- Include any specific concerns raised
+- Note any vulnerable populations or areas
+
+## Key Findings & Recommendations
+- Main takeaways from the assessment
+- Immediate priorities (if identified)
+- Suggested next steps or actions
+
+## Data & Resources Discussed
+- Any data sources mentioned (SVI, OFIRMS, etc.)
+- Resources or information gaps identified
+
+---
+**Report Generated:** {datetime.now().strftime("%B %d, %Y at %I:%M %p")}
+**Session ID:** {st.session_state.conversation_id}
+
+Be concise but specific. If the conversation is brief, work with what was discussed. If information is missing, note it as a gap to address."""
+
+    try:
+        # Call OpenAI to generate report
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are an expert fire service consultant. Create concise, actionable Community Risk Assessment reports based on conversations. Keep reports focused and practical."},
+                {"role": "user", "content": report_prompt}
+            ],
+            temperature=0.7,
+            max_tokens=1500
+        )
+        
+        return response.choices[0].message.content
+    
+    except Exception as e:
+        return f"Error generating report: {str(e)}"
+
 # Title and introduction
 st.title("🚒 Community Risk Assessment AI Consultant")
 st.markdown("""
@@ -79,6 +136,7 @@ This AI consultant helps fire departments conduct comprehensive Community Risk A
 - 📊 Explaining data sources and their relevance  
 - 🧠 Teaching risk analysis methodologies
 - 💡 Providing insights from similar communities
+- 📋 Generating CRA reports
 """)
 
 st.markdown("---")
@@ -86,7 +144,6 @@ st.markdown("---")
 # Initialize session state
 if "messages" not in st.session_state:
     st.session_state.messages = []
-    # Add welcome message
     welcome = """Hello! I'm your AI consultant for Community Risk Assessment. Before we begin, I'd like to understand who I'm working with.
 
 **Could you tell me your name and your role with the fire department?**
@@ -100,11 +157,16 @@ if "conversation_id" not in st.session_state:
 if "user_info" not in st.session_state:
     st.session_state.user_info = {}
 
+if "report_generated" not in st.session_state:
+    st.session_state.report_generated = False
+
+if "current_report" not in st.session_state:
+    st.session_state.current_report = None
+
 # Sidebar
 with st.sidebar:
     st.header("📋 Session Information")
     
-    # Display conversation ID
     st.caption(f"Session: {st.session_state.conversation_id}")
     
     # Display user information
@@ -132,7 +194,9 @@ with st.sidebar:
             st.session_state.messages = []
             st.session_state.conversation_id = datetime.now().strftime("%Y%m%d_%H%M%S")
             st.session_state.user_info = {}
-            welcome = """Hello! I'm your AI consultant for Community Risk Assessment. Before we begin, I'd like to understand who I'm working with.
+            st.session_state.report_generated = False
+            st.session_state.current_report = None
+            welcome = """Hello! I'm your AI consultant for Community Risk Assessment.
 
 **Could you tell me your name and your role with the fire department?**"""
             st.session_state.messages.append({"role": "assistant", "content": welcome})
@@ -140,7 +204,6 @@ with st.sidebar:
     
     with col2:
         if len(st.session_state.messages) > 2:
-            # Prepare download data
             download_data = {
                 "session_id": st.session_state.conversation_id,
                 "timestamp": datetime.now().isoformat(),
@@ -150,68 +213,51 @@ with st.sidebar:
             }
             
             st.download_button(
-                label="💾 Save",
+                label="💾 Save Chat",
                 data=json.dumps(download_data, indent=2),
-                file_name=f"CRA_{st.session_state.conversation_id}.json",
+                file_name=f"CRA_Chat_{st.session_state.conversation_id}.json",
                 mime="application/json",
                 use_container_width=True
             )
     
-    # Generate report button (when there's enough conversation)
-    if len(st.session_state.messages) > 10:
-        st.markdown("---")
-        if st.button("📋 Generate CRA Report", type="primary", use_container_width=True):
-            with st.spinner("Generating comprehensive CRA report..."):
-                try:
-                    # Build conversation summary
-                    conversation_summary = "\n\n".join([
-                        f"{msg['role'].upper()}: {msg['content']}" 
-                        for msg in st.session_state.messages
-                    ])
-                    
-                    report_prompt = f"""Based on the following conversation with a fire department officer, create a comprehensive Community Risk Assessment (CRA) report.
-
-{conversation_summary}
-
-Create a professional CRA report in markdown format with these sections:
-1. Executive Summary
-2. Department Information  
-3. Community Profile
-4. Identified Risks (categorized and prioritized)
-5. Risk Analysis & Interconnections
-6. Data Sources Used
-7. Key Recommendations
-8. Next Steps
-
-Make it actionable and professional."""
-
-                    response = client.chat.completions.create(
-                        model="gpt-4",
-                        messages=[
-                            {"role": "system", "content": "You are an expert in creating Community Risk Assessment reports for fire departments."},
-                            {"role": "user", "content": report_prompt}
-                        ],
-                        temperature=0.7
-                    )
-                    
-                    report = response.choices[0].message.content
-                    
-                    # Display report
-                    st.success("✅ Report generated!")
-                    with st.expander("📄 View CRA Report", expanded=True):
-                        st.markdown(report)
-                    
-                    # Download report
-                    st.download_button(
-                        label="📥 Download Report",
-                        data=report,
-                        file_name=f"CRA_Report_{st.session_state.conversation_id}.md",
-                        mime="text/markdown",
-                        use_container_width=True
-                    )
-                    
-                except Exception as e:
-                    st.error(f"Error generating report: {str(e)}")
+    st.markdown("---")
+    
+    # Generate CRA Report Section
+    st.subheader("📋 Generate Report")
+    
+    # Can generate after 3+ messages (at least 2 exchanges)
+    if len(st.session_state.messages) < 5:  # Welcome + user + bot + user + bot = 5
+        remaining = 5 - len(st.session_state.messages)
+        st.info(f"💬 {remaining} more message(s) to generate report")
+    else:
+        st.success("✅ Ready to generate report!")
+        
+        # Generate Report Button
+        if st.button("📝 Generate Report", type="primary", use_container_width=True):
+            with st.spinner("Generating CRA report..."):
+                report = generate_cra_report(st.session_state.messages)
+                st.session_state.current_report = report
+                st.session_state.report_generated = True
+                st.success("✅ Report generated!")
+                st.rerun()
+        
+        # Download buttons (if report exists)
+        if st.session_state.report_generated and st.session_state.current_report:
+            st.download_button(
+                label="📥 Download Report (MD)",
+                data=st.session_state.current_report,
+                file_name=f"CRA_Report_{st.session_state.conversation_id}.md",
+                mime="text/markdown",
+                use_container_width=True
+            )
+            
+            st.download_button(
+                label="📄 Download Report (TXT)",
+                data=st.session_state.current_report,
+                file_name=f"CRA_Report_{st.session_state.conversation_id}.txt",
+                mime="text/plain",
+                use_container_width=True
+            )
     
     st.markdown("---")
     
@@ -219,19 +265,19 @@ Make it actionable and professional."""
     with st.expander("ℹ️ How to Use"):
         st.markdown("""
         **Getting Started:**
-        1. Introduce yourself and your department
-        2. Answer questions one at a time
-        3. Learn about risk factors as you go
+        1. Introduce yourself and department
+        2. Answer 2-3 questions
+        3. Generate your CRA report
         
         **Tips:**
         - Be specific about your community
-        - Share local challenges
-        - Ask for explanations anytime
+        - Share key challenges
+        - More detail = better report
         
-        **Features:**
-        - Auto-saves conversation
-        - Generates final CRA report
-        - Educational throughout
+        **Report:**
+        - Available after 3+ messages
+        - Can regenerate anytime
+        - Download as MD or TXT
         """)
 
 # Main conversation area
@@ -256,20 +302,20 @@ if prompt := st.chat_input("Type your message here...", key="chat_input"):
                 # Build messages
                 messages = [{"role": "system", "content": SYSTEM_PROMPT}]
                 
-                # Add conversation history (last 20 messages to control tokens)
+                # Add conversation history (last 20 messages)
                 for msg in st.session_state.messages[-20:]:
                     messages.append({"role": msg["role"], "content": msg["content"]})
                 
-                # Call OpenAI API (streaming output)
+                # Call OpenAI API
                 stream = client.chat.completions.create(
-                    model="gpt-4",  # or "gpt-3.5-turbo" for faster and cheaper
+                    model="gpt-4",
                     messages=messages,
                     stream=True,
                     temperature=0.7,
                     max_tokens=1000
                 )
                 
-                # Stream display response
+                # Stream response
                 response = st.write_stream(stream)
                 
             except Exception as e:
@@ -279,7 +325,40 @@ if prompt := st.chat_input("Type your message here...", key="chat_input"):
     # Save response to history
     st.session_state.messages.append({"role": "assistant", "content": response})
 
+# Display Generated Report (if exists)
+if st.session_state.report_generated and st.session_state.current_report:
+    st.markdown("---")
+    st.subheader("📊 Generated CRA Report")
+    
+    with st.expander("📄 View Report", expanded=True):
+        st.markdown(st.session_state.current_report)
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.download_button(
+            label="📥 Download Markdown",
+            data=st.session_state.current_report,
+            file_name=f"CRA_Report_{st.session_state.conversation_id}.md",
+            mime="text/markdown"
+        )
+    
+    with col2:
+        st.download_button(
+            label="📄 Download Text",
+            data=st.session_state.current_report,
+            file_name=f"CRA_Report_{st.session_state.conversation_id}.txt",
+            mime="text/plain"
+        )
+    
+    with col3:
+        if st.button("🔄 Regenerate"):
+            with st.spinner("Regenerating..."):
+                report = generate_cra_report(st.session_state.messages)
+                st.session_state.current_report = report
+                st.rerun()
+
 # Footer
 st.markdown("---")
 st.caption("🚒 AI-Enhanced Community Risk Assessment | Developed for Fire Service Professionals")
-st.caption("💡 This bot educates while assessing - each conversation helps you learn systematic risk analysis methods")
+st.caption("💡 This bot educates while assessing - generates reports from your conversations")
