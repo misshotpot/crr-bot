@@ -2,6 +2,8 @@ import streamlit as st
 from openai import OpenAI
 import json
 from datetime import datetime
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
 # Page configuration
 st.set_page_config(
@@ -10,111 +12,159 @@ st.set_page_config(
     layout="wide"
 )
 
-# Read OpenAI API key from Streamlit Secrets
+# ============================================
+# API Configuration
+# ============================================
+
+# OpenAI API
 try:
     openai_api_key = st.secrets["OPENAI_API_KEY"]
     client = OpenAI(api_key=openai_api_key)
-    api_configured = True
 except Exception as e:
-    api_configured = False
-    st.error("⚠️ API key not configured. Please contact administrator.")
+    st.error("⚠️ OpenAI API key not configured.")
     st.stop()
 
-# Fire service professional system prompt
+# ============================================
+# Google Sheets Integration
+# ============================================
+
+@st.cache_resource
+def init_google_sheets():
+    """Initialize Google Sheets connection"""
+    try:
+        scope = [
+            'https://spreadsheets.google.com/feeds',
+            'https://www.googleapis.com/auth/drive'
+        ]
+        
+        creds_dict = json.loads(st.secrets.get("GOOGLE_CREDENTIALS", "{}"))
+        if not creds_dict:
+            return None, "Credentials not found"
+            
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        gclient = gspread.authorize(creds)
+        
+        sheet_name = "CRA_Training_Data"
+        try:
+            spreadsheet = gclient.open(sheet_name)
+            sheet = spreadsheet.sheet1
+        except gspread.SpreadsheetNotFound:
+            spreadsheet = gclient.create(sheet_name)
+            sheet = spreadsheet.sheet1
+            
+            # Add headers
+            sheet.append_row([
+                "Timestamp",
+                "Session ID",
+                "User Name",
+                "Department",
+                "Message Count",
+                "Full Conversation (JSON)",
+                "Generated Report",
+                "Risks Identified"
+            ])
+        
+        return sheet, None
+        
+    except Exception as e:
+        return None, str(e)
+
+# Initialize Google Sheets
+google_sheet, sheets_error = init_google_sheets()
+
+def save_conversation_to_sheets(sheet, session_data):
+    """Save conversation data to Google Sheets"""
+    if sheet is None:
+        return False, "Sheet not initialized"
+    
+    try:
+        session_id = session_data.get("session_id", "")
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        user_name = session_data.get("user_info", {}).get("name", "Unknown")
+        department = session_data.get("user_info", {}).get("department", "Unknown")
+        messages = session_data.get("messages", [])
+        message_count = len(messages)
+        report = session_data.get("report", "Not generated")
+        risks = ", ".join(session_data.get("risks", []))
+        
+        conversation_json = json.dumps(messages, ensure_ascii=False)
+        
+        row = [
+            timestamp,
+            session_id,
+            user_name,
+            department,
+            message_count,
+            conversation_json,
+            report[:500] if report else "",
+            risks
+        ]
+        
+        sheet.append_row(row)
+        
+        return True, "Saved successfully"
+        
+    except Exception as e:
+        return False, str(e)
+
+# ============================================
+# System Prompt
+# ============================================
+
 SYSTEM_PROMPT = """You are an AI consultant specializing in Community Risk Assessment (CRA) for fire departments.
 
 Your role is three-fold:
 
-1. ASSESSMENT CONDUCTOR: Guide fire chiefs and officers through systematic risk identification using conversational interviews.
+1. ASSESSMENT CONDUCTOR: Guide fire chiefs through systematic risk identification.
 
-2. DATA EDUCATOR: Help users access and understand various data sources including:
-   - OFIRMS (Ohio Fire Information Reporting Management System)
-   - Social Vulnerability Index (SVI)
-   - GIS community information
-   - Local inspection reports and strategic plans
-   - EMS incident data
-   - Building and fire codes
-   - Pre-incident plans
-   - Weather, crime, and demographic data
+2. DATA EDUCATOR: Help users understand data sources (OFIRMS, SVI, GIS, etc.).
 
-3. EDUCATIONAL CONSULTANT: Explain why different data matters, how risk factors interconnect, and what various indicators mean for community safety.
+3. EDUCATIONAL CONSULTANT: Explain risk interconnections and best practices.
 
-CRITICAL INTERACTION RULES:
-- Ask ONE QUESTION AT A TIME only - never ask multiple questions in one response
-- Always EXPLAIN WHY you need information before asking the question
-- When you find or discuss data, ASK if they have newer/better data before proceeding
-- EDUCATE throughout - explain connections, why things matter, how factors relate
-- After each response, explain why the next piece of information matters before asking for it
+CRITICAL RULES:
+- Ask ONE QUESTION AT A TIME only
+- Always EXPLAIN WHY you need information before asking
+- EDUCATE throughout the conversation
 
-ADAPTIVE QUESTIONING:
-Tailor your approach based on department type:
-- Rural/Wildland Interface: Focus on vegetation management, evacuation routes, seasonal risks
-- Urban Core: Emphasize high-rise buildings, population density, infrastructure age
-- Suburban: Balance residential risks with commercial and industrial considerations
-- Volunteer Departments: Consider resource limitations, response time challenges, training needs
+TONE: Professional, educational, consultative."""
 
-CONVERSATION FLOW:
-1. Start by learning about the user (name, role, department type, location, community characteristics)
-2. Progressively build understanding through targeted questions
-3. Share relevant examples from similar communities when appropriate
-4. Explain how risk factors compound and interconnect
-5. Validate findings with the user throughout the process
+# ============================================
+# Report Generation
+# ============================================
 
-TONE: Professional, educational, consultative - like an experienced peer mentor who's helping them think through complex problems.
-
-Remember: This is NOT just data collection - you're teaching systematic risk analysis while conducting the assessment. Users should leave with enhanced analytical skills they can apply ongoing."""
-
-# Function to generate simplified CRA report
 def generate_cra_report(conversation_history):
-    """Generate a concise Community Risk Assessment report"""
+    """Generate CRA report"""
     
-    # Build conversation summary
     conversation_text = "\n\n".join([
         f"{msg['role'].upper()}: {msg['content']}" 
         for msg in conversation_history
     ])
     
-    # Create simplified prompt for report generation
-    report_prompt = f"""Based on the following conversation with a fire department officer, create a concise Community Risk Assessment (CRA) report.
+    report_prompt = f"""Based on this conversation, create a concise CRA report.
 
 CONVERSATION:
 {conversation_text}
 
-Create a professional but concise CRA report in markdown format with these sections:
+Create a professional report in markdown format:
 
 # Community Risk Assessment Report
 
 ## Department & Community Overview
-- Department name, location, and type
-- Community characteristics
-- Key demographics or geographic features mentioned
-
-## Identified Risks & Concerns
-- List all risks discussed (with priority if mentioned)
-- Include any specific concerns raised
-- Note any vulnerable populations or areas
-
+## Identified Risks & Concerns  
 ## Key Findings & Recommendations
-- Main takeaways from the assessment
-- Immediate priorities (if identified)
-- Suggested next steps or actions
-
 ## Data & Resources Discussed
-- Any data sources mentioned (SVI, OFIRMS, etc.)
-- Resources or information gaps identified
 
 ---
 **Report Generated:** {datetime.now().strftime("%B %d, %Y at %I:%M %p")}
 **Session ID:** {st.session_state.conversation_id}
 
-Be concise but specific. If the conversation is brief, work with what was discussed. If information is missing, note it as a gap to address."""
+Be specific and actionable."""
 
     try:
-        # Call OpenAI to generate report
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are an expert fire service consultant. Create concise, actionable Community Risk Assessment reports based on conversations. Keep reports focused and practical."},
+                {"role": "system", "content": "You are an expert fire service consultant."},
                 {"role": "user", "content": report_prompt}
             ],
             temperature=0.7,
@@ -122,21 +172,20 @@ Be concise but specific. If the conversation is brief, work with what was discus
         )
         
         return response.choices[0].message.content
-    
     except Exception as e:
         return f"Error generating report: {str(e)}"
 
-# Title and introduction
+# ============================================
+# Main Application
+# ============================================
+
 st.title("🚒 Community Risk Assessment AI Consultant")
 st.markdown("""
-**Transforming Community Risk Reduction Through Intelligent Consultation**
+**AI-Enhanced Community Risk Reduction with Automatic Data Collection**
 
-This AI consultant helps fire departments conduct comprehensive Community Risk Assessments by:
-- 🎯 Guiding systematic risk identification
-- 📊 Explaining data sources and their relevance  
-- 🧠 Teaching risk analysis methodologies
-- 💡 Providing insights from similar communities
-- 📋 Generating CRA reports
+- 🎯 Systematic risk identification
+- 📊 Professional CRA reports
+- 💾 Automatic conversation saving for research
 """)
 
 st.markdown("---")
@@ -144,11 +193,11 @@ st.markdown("---")
 # Initialize session state
 if "messages" not in st.session_state:
     st.session_state.messages = []
-    welcome = """Hello! I'm your AI consultant for Community Risk Assessment. Before we begin, I'd like to understand who I'm working with.
+    welcome = """Hello! I'm your AI consultant for Community Risk Assessment.
 
-**Could you tell me your name and your role with the fire department?**
+**To get started, could you tell me your name and role with the fire department?**
 
-For example: "I'm Chief Smith from the Springfield Fire Department" or "I'm Lt. Johnson, we're a volunteer department in rural Ohio"."""
+For example: "I'm Chief Smith from the Springfield Fire Department" """
     st.session_state.messages.append({"role": "assistant", "content": welcome})
 
 if "conversation_id" not in st.session_state:
@@ -163,43 +212,74 @@ if "report_generated" not in st.session_state:
 if "current_report" not in st.session_state:
     st.session_state.current_report = None
 
+if "auto_saved" not in st.session_state:
+    st.session_state.auto_saved = False
+
+if "identified_risks" not in st.session_state:
+    st.session_state.identified_risks = []
+
+# ============================================
 # Sidebar
+# ============================================
+
 with st.sidebar:
-    st.header("📋 Session Information")
+    st.header("📋 Session Info")
     
     st.caption(f"Session: {st.session_state.conversation_id}")
     
-    # Display user information
-    if st.session_state.user_info:
-        st.subheader("👤 User Profile")
-        for key, value in st.session_state.user_info.items():
-            st.text(f"{key}: {value}")
+    # Google Sheets status
+    if google_sheet:
+        st.success("✅ Auto-save: Enabled")
+        st.caption("Data saved to Google Sheets")
+    else:
+        st.warning("⚠️ Auto-save: Disabled")
+        if sheets_error:
+            with st.expander("Error details"):
+                st.text(sheets_error)
     
     st.markdown("---")
     
-    # Conversation statistics
-    st.subheader("💬 Conversation Stats")
+    # Stats
+    st.subheader("💬 Stats")
     message_count = len(st.session_state.messages)
     st.metric("Messages", message_count)
     
+    if st.session_state.identified_risks:
+        st.metric("Risks", len(st.session_state.identified_risks))
+    
     st.markdown("---")
     
-    # Action buttons
+    # Actions
     st.subheader("⚙️ Actions")
     
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("🔄 New Session", use_container_width=True):
+        if st.button("🔄 New", use_container_width=True):
+            # Save before clearing
+            if google_sheet and len(st.session_state.messages) > 2 and not st.session_state.auto_saved:
+                session_data = {
+                    "session_id": st.session_state.conversation_id,
+                    "user_info": st.session_state.user_info,
+                    "messages": st.session_state.messages,
+                    "report": st.session_state.current_report,
+                    "risks": st.session_state.identified_risks
+                }
+                success, msg = save_conversation_to_sheets(google_sheet, session_data)
+                if success:
+                    st.success("✅ 已自动保存到数据库")
+                else:
+                    st.warning(f"⚠️ 保存失败: {msg}")
+                    st.info("💾 请使用手动下载备份")
+            
+            # Reset
             st.session_state.messages = []
             st.session_state.conversation_id = datetime.now().strftime("%Y%m%d_%H%M%S")
             st.session_state.user_info = {}
             st.session_state.report_generated = False
             st.session_state.current_report = None
-            welcome = """Hello! I'm your AI consultant for Community Risk Assessment.
-
-**Could you tell me your name and your role with the fire department?**"""
-            st.session_state.messages.append({"role": "assistant", "content": welcome})
+            st.session_state.auto_saved = False
+            st.session_state.identified_risks = []
             st.rerun()
     
     with col2:
@@ -209,104 +289,126 @@ with st.sidebar:
                 "timestamp": datetime.now().isoformat(),
                 "user_info": st.session_state.user_info,
                 "messages": st.session_state.messages,
-                "message_count": len(st.session_state.messages)
+                "report": st.session_state.current_report
             }
             
             st.download_button(
-                label="💾 Save Chat",
-                data=json.dumps(download_data, indent=2),
-                file_name=f"CRA_Chat_{st.session_state.conversation_id}.json",
+                label="💾 Save",
+                data=json.dumps(download_data, indent=2, ensure_ascii=False),
+                file_name=f"CRA_{st.session_state.conversation_id}.json",
                 mime="application/json",
                 use_container_width=True
             )
     
     st.markdown("---")
     
-    # Generate CRA Report Section
-    st.subheader("📋 Generate Report")
+    # Generate Report
+    st.subheader("📋 Report")
     
-    # Can generate after 3+ messages (at least 2 exchanges)
-    if len(st.session_state.messages) < 5:  # Welcome + user + bot + user + bot = 5
+    if len(st.session_state.messages) < 5:
         remaining = 5 - len(st.session_state.messages)
-        st.info(f"💬 {remaining} more message(s) to generate report")
+        st.info(f"💬 {remaining} more message(s)")
     else:
-        st.success("✅ Ready to generate report!")
+        st.success("✅ Ready!")
         
-        # Generate Report Button
-        if st.button("📝 Generate Report", type="primary", use_container_width=True):
-            with st.spinner("Generating CRA report..."):
+        if st.button("📝 Generate", type="primary", use_container_width=True):
+            with st.spinner("Generating report..."):
                 report = generate_cra_report(st.session_state.messages)
                 st.session_state.current_report = report
                 st.session_state.report_generated = True
-                st.success("✅ Report generated!")
+                
+                # Auto-save to Google Sheets when report generated
+                if google_sheet and not st.session_state.auto_saved:
+                    session_data = {
+                        "session_id": st.session_state.conversation_id,
+                        "user_info": st.session_state.user_info,
+                        "messages": st.session_state.messages,
+                        "report": report,
+                        "risks": st.session_state.identified_risks
+                    }
+                    success, msg = save_conversation_to_sheets(google_sheet, session_data)
+                    if success:
+                        st.session_state.auto_saved = True
+                        st.success("✅ 已自动保存到数据库")
+                        st.success("✅ Report generated!")
+                    else:
+                        st.warning(f"⚠️ 保存失败: {msg}")
+                        st.info("💾 请使用手动下载备份")
+                        st.success("✅ Report generated!")
+                else:
+                    st.success("✅ Report generated!")
+                
                 st.rerun()
         
-        # Download buttons (if report exists)
         if st.session_state.report_generated and st.session_state.current_report:
             st.download_button(
-                label="📥 Download Report (MD)",
+                label="📥 Download",
                 data=st.session_state.current_report,
-                file_name=f"CRA_Report_{st.session_state.conversation_id}.md",
+                file_name=f"CRA_{st.session_state.conversation_id}.md",
                 mime="text/markdown",
-                use_container_width=True
-            )
-            
-            st.download_button(
-                label="📄 Download Report (TXT)",
-                data=st.session_state.current_report,
-                file_name=f"CRA_Report_{st.session_state.conversation_id}.txt",
-                mime="text/plain",
                 use_container_width=True
             )
     
     st.markdown("---")
     
-    # Help information
     with st.expander("ℹ️ How to Use"):
         st.markdown("""
-        **Getting Started:**
-        1. Introduce yourself and department
+        **Quick Start:**
+        1. Introduce yourself
         2. Answer 2-3 questions
-        3. Generate your CRA report
+        3. Generate report
         
-        **Tips:**
-        - Be specific about your community
-        - Share key challenges
-        - More detail = better report
+        **Features:**
+        - ✅ Auto-save to database
+        - ✅ Download chat & report
+        - ✅ Quick reports (3+ messages)
         
-        **Report:**
-        - Available after 3+ messages
-        - Can regenerate anytime
-        - Download as MD or TXT
+        **Data Collection:**
+        All conversations automatically
+        saved to Google Sheets for
+        research and model training.
         """)
+    
+    if google_sheet:
+        with st.expander("📊 View Data"):
+            st.markdown("""
+            **To view saved data:**
+            1. Go to Google Sheets
+            2. Find "CRA_Training_Data"
+            3. View all conversations
+            
+            **Spreadsheet includes:**
+            - Timestamp
+            - User info
+            - Full conversations
+            - Generated reports
+            - Identified risks
+            """)
 
-# Main conversation area
+# ============================================
+# Main Conversation Area
+# ============================================
+
 st.subheader("💬 Consultation")
 
-# Display conversation history
+# Display conversation
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
 # Chat input
-if prompt := st.chat_input("Type your message here...", key="chat_input"):
-    # Display user message
+if prompt := st.chat_input("Type your message..."):
     with st.chat_message("user"):
         st.markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
     
-    # Generate AI response
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:
-                # Build messages
                 messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-                
-                # Add conversation history (last 20 messages)
                 for msg in st.session_state.messages[-20:]:
                     messages.append({"role": msg["role"], "content": msg["content"]})
                 
-                # Call OpenAI API
                 stream = client.chat.completions.create(
                     model="gpt-4",
                     messages=messages,
@@ -315,20 +417,18 @@ if prompt := st.chat_input("Type your message here...", key="chat_input"):
                     max_tokens=1000
                 )
                 
-                # Stream response
                 response = st.write_stream(stream)
                 
             except Exception as e:
-                response = f"❌ Error: {str(e)}\n\nPlease contact administrator."
+                response = f"❌ Error: {str(e)}"
                 st.error(response)
     
-    # Save response to history
     st.session_state.messages.append({"role": "assistant", "content": response})
 
-# Display Generated Report (if exists)
+# Display generated report
 if st.session_state.report_generated and st.session_state.current_report:
     st.markdown("---")
-    st.subheader("📊 Generated CRA Report")
+    st.subheader("📊 Generated Report")
     
     with st.expander("📄 View Report", expanded=True):
         st.markdown(st.session_state.current_report)
@@ -337,17 +437,17 @@ if st.session_state.report_generated and st.session_state.current_report:
     
     with col1:
         st.download_button(
-            label="📥 Download Markdown",
+            label="📥 Download MD",
             data=st.session_state.current_report,
-            file_name=f"CRA_Report_{st.session_state.conversation_id}.md",
+            file_name=f"CRA_{st.session_state.conversation_id}.md",
             mime="text/markdown"
         )
     
     with col2:
         st.download_button(
-            label="📄 Download Text",
+            label="📄 Download TXT",
             data=st.session_state.current_report,
-            file_name=f"CRA_Report_{st.session_state.conversation_id}.txt",
+            file_name=f"CRA_{st.session_state.conversation_id}.txt",
             mime="text/plain"
         )
     
@@ -360,5 +460,8 @@ if st.session_state.report_generated and st.session_state.current_report:
 
 # Footer
 st.markdown("---")
-st.caption("🚒 AI-Enhanced Community Risk Assessment | Developed for Fire Service Professionals")
-st.caption("💡 This bot educates while assessing - generates reports from your conversations")
+st.caption("🚒 AI-Enhanced Community Risk Assessment | For Fire Service Professionals")
+if google_sheet:
+    st.caption("💾 Conversations automatically saved to Google Sheets for research")
+if st.session_state.auto_saved:
+    st.caption("✅ This session has been saved to the database")
