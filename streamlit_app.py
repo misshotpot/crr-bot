@@ -267,10 +267,10 @@ with st.sidebar:
                 }
                 success, msg = save_conversation_to_sheets(google_sheet, session_data)
                 if success:
-                    st.success("✅ 已自动保存到数据库")
+                    st.success("✅ Auto-saved to database")
                 else:
-                    st.warning(f"⚠️ 保存失败: {msg}")
-                    st.info("💾 请使用手动下载备份")
+                    st.warning(f"⚠️ Save failed: {msg}")
+                    st.info("💾 Please use manual download backup")
             
             # Reset
             st.session_state.messages = []
@@ -329,11 +329,11 @@ with st.sidebar:
                     success, msg = save_conversation_to_sheets(google_sheet, session_data)
                     if success:
                         st.session_state.auto_saved = True
-                        st.success("✅ 已自动保存到数据库")
+                        st.success("✅ Auto-saved to database")
                         st.success("✅ Report generated!")
                     else:
-                        st.warning(f"⚠️ 保存失败: {msg}")
-                        st.info("💾 请使用手动下载备份")
+                        st.warning(f"⚠️ Save failed: {msg}")
+                        st.info("💾 Please use manual download backup")
                         st.success("✅ Report generated!")
                 else:
                     st.success("✅ Report generated!")
