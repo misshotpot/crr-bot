@@ -299,26 +299,96 @@ for message in st.session_state.messages:
 
 # Display generated report if available
 if st.session_state.report_generated and st.session_state.current_report:
-    with st.expander("📊 Generated Report", expanded=False):
+    with st.expander("📊 Generated Report", expanded=True):
         st.markdown(st.session_state.current_report)
         
-        col1, col2 = st.columns(2)
+        st.markdown("---")
+        
+        # Report action buttons
+        col1, col2, col3 = st.columns(3)
+        
         with col1:
             st.download_button(
-                label="📥 Download as Markdown",
+                label="📥 Download MD",
                 data=st.session_state.current_report,
                 file_name=f"CRA_{st.session_state.conversation_id}.md",
                 mime="text/markdown",
-                key="download_md"
+                key="download_md",
+                use_container_width=True
             )
+        
         with col2:
             st.download_button(
-                label="📄 Download as Text",
+                label="📄 Download TXT",
                 data=st.session_state.current_report,
                 file_name=f"CRA_{st.session_state.conversation_id}.txt",
                 mime="text/plain",
-                key="download_txt"
+                key="download_txt",
+                use_container_width=True
             )
+        
+        with col3:
+            if st.button("🔄 Regenerate", key="regenerate_btn", use_container_width=True):
+                with st.spinner("Regenerating report..."):
+                    new_report = generate_cra_report(st.session_state.messages)
+                    st.session_state.current_report = new_report
+                    st.rerun()
+        
+        # Report modification interface
+        st.markdown("### 📝 Modify Report")
+        st.caption("Ask AI to adjust the report content")
+        
+        modification_request = st.text_area(
+            label="What would you like to change?",
+            placeholder="Example: Add more details about wildfire risks, or Make the executive summary shorter, or Focus more on senior safety concerns",
+            height=100,
+            key="mod_request"
+        )
+        
+        if st.button("✨ Modify Report", key="modify_btn", disabled=not modification_request):
+            with st.spinner("Modifying report..."):
+                try:
+                    # Create modification prompt
+                    modify_prompt = f"""You are modifying a Community Risk Assessment report.
+
+ORIGINAL REPORT:
+{st.session_state.current_report}
+
+USER REQUEST:
+{modification_request}
+
+Please generate an updated version of the report that incorporates the user's request while maintaining the professional format and structure. Keep the same markdown format with headers."""
+
+                    response = client.chat.completions.create(
+                        model="gpt-4",
+                        messages=[
+                            {"role": "system", "content": "You are an expert fire service consultant specializing in report writing."},
+                            {"role": "user", "content": modify_prompt}
+                        ],
+                        temperature=0.7,
+                        max_tokens=1500
+                    )
+                    
+                    # Update report
+                    st.session_state.current_report = response.choices[0].message.content
+                    
+                    # Save updated report
+                    if google_sheet:
+                        session_data = {
+                            "session_id": st.session_state.conversation_id,
+                            "user_info": st.session_state.user_info,
+                            "messages": st.session_state.messages,
+                            "report": st.session_state.current_report,
+                            "risks": st.session_state.identified_risks
+                        }
+                        save_conversation_to_sheets(google_sheet, session_data)
+                        st.session_state.auto_saved = True
+                    
+                    st.success("✅ Report modified successfully!")
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"❌ Error modifying report: {str(e)}")
 
 # Chat input
 if prompt := st.chat_input("Type your message..."):
