@@ -555,4 +555,4 @@ with col2:
     if google_sheet and st.session_state.auto_saved:
         st.caption("✅ Data saved")
 with col3:
-    st.caption(f"Session: {st.session_state.conversation_id[:8]}...")v
+    st.caption(f"Session: {st.session_state.conversation_id[:8]}...")
