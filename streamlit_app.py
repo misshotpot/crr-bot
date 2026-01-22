@@ -144,6 +144,37 @@ CRITICAL RULES:
 TONE: Professional, educational, consultative."""
 
 # ============================================
+# Web Search Function
+# ============================================
+
+def web_search(query):
+    """
+    Perform web search using DuckDuckGo (no API key required)
+    Returns search results as formatted text
+    """
+    try:
+        from duckduckgo_search import DDGS
+        
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=5))
+            
+        if not results:
+            return "No search results found."
+        
+        formatted_results = f"### Web Search Results for: '{query}'\n\n"
+        for i, result in enumerate(results, 1):
+            formatted_results += f"**{i}. {result.get('title', 'No title')}**\n"
+            formatted_results += f"{result.get('body', 'No description')}\n"
+            formatted_results += f"Source: {result.get('href', 'No link')}\n\n"
+        
+        return formatted_results
+    
+    except ImportError:
+        return "⚠️ Web search not available. Install duckduckgo-search package."
+    except Exception as e:
+        return f"⚠️ Search error: {str(e)}"
+
+# ============================================
 # Report Generation
 # ============================================
 
@@ -227,8 +258,81 @@ if "identified_risks" not in st.session_state:
 
 st.title("🚒 Community Risk Assessment AI Consultant")
 
+# File upload section
+uploaded_file = st.file_uploader(
+    "📎 Upload documents (optional)",
+    type=["pdf", "txt", "docx", "csv", "xlsx", "json"],
+    help="Upload relevant documents like strategic plans, inspection reports, or data files"
+)
+
+if uploaded_file:
+    if "uploaded_files" not in st.session_state:
+        st.session_state.uploaded_files = {}
+    
+    # Process uploaded file
+    file_content = uploaded_file.read()
+    file_name = uploaded_file.name
+    file_type = uploaded_file.type
+    
+    # Store file info
+    st.session_state.uploaded_files[file_name] = {
+        "content": file_content,
+        "type": file_type,
+        "name": file_name
+    }
+    
+    # Extract text based on file type
+    if file_type == "text/plain" or file_name.endswith('.txt'):
+        file_text = file_content.decode('utf-8')
+        st.success(f"✅ Uploaded: {file_name} ({len(file_text)} characters)")
+        
+        # Add to context
+        if "file_context" not in st.session_state:
+            st.session_state.file_context = ""
+        st.session_state.file_context += f"\n\n--- FILE: {file_name} ---\n{file_text}\n"
+    
+    elif file_type == "application/pdf" or file_name.endswith('.pdf'):
+        try:
+            import PyPDF2
+            from io import BytesIO
+            
+            pdf_reader = PyPDF2.PdfReader(BytesIO(file_content))
+            file_text = ""
+            for page in pdf_reader.pages:
+                file_text += page.extract_text()
+            
+            st.success(f"✅ Uploaded: {file_name} ({len(file_text)} characters)")
+            
+            if "file_context" not in st.session_state:
+                st.session_state.file_context = ""
+            st.session_state.file_context += f"\n\n--- FILE: {file_name} ---\n{file_text}\n"
+        except:
+            st.warning(f"⚠️ Could not extract text from PDF. Install PyPDF2 for PDF support.")
+    
+    elif file_name.endswith('.csv'):
+        import csv
+        from io import StringIO
+        
+        csv_text = file_content.decode('utf-8')
+        st.success(f"✅ Uploaded: {file_name}")
+        
+        if "file_context" not in st.session_state:
+            st.session_state.file_context = ""
+        st.session_state.file_context += f"\n\n--- FILE: {file_name} ---\n{csv_text}\n"
+    
+    else:
+        st.info(f"📄 Uploaded: {file_name} (Preview not available for this file type)")
+
 # Control buttons in header
 col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+
+with col1:
+    # Web search toggle
+    if "web_search_enabled" not in st.session_state:
+        st.session_state.web_search_enabled = False
+    
+    web_search = st.checkbox("🔍 Enable Web Search", value=st.session_state.web_search_enabled)
+    st.session_state.web_search_enabled = web_search
 
 with col2:
     if len(st.session_state.messages) >= 5 and not st.session_state.report_generated:
@@ -399,10 +503,32 @@ if prompt := st.chat_input("Type your message..."):
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:
+                # Build messages with system prompt
                 messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+                
+                # Add file context if available
+                if "file_context" in st.session_state and st.session_state.file_context:
+                    file_context_msg = f"UPLOADED DOCUMENTS:\n{st.session_state.file_context}\n\nUse this information when relevant to the conversation."
+                    messages.append({"role": "system", "content": file_context_msg})
+                
+                # Add conversation history
                 for msg in st.session_state.messages[-20:]:
                     messages.append({"role": msg["role"], "content": msg["content"]})
                 
+                # Perform web search if enabled and query seems to need it
+                search_results = ""
+                if st.session_state.web_search_enabled:
+                    # Check if question might benefit from web search
+                    search_keywords = ["latest", "current", "recent", "new", "update", "news", "trend", "2024", "2025"]
+                    if any(keyword in prompt.lower() for keyword in search_keywords):
+                        with st.status("🔍 Searching the web...", expanded=False) as status:
+                            search_results = web_search(prompt)
+                            status.update(label="✅ Search complete", state="complete")
+                        
+                        if search_results and "No search results" not in search_results:
+                            messages.append({"role": "system", "content": f"WEB SEARCH RESULTS:\n{search_results}\n\nUse these search results to provide current, accurate information."})
+                
+                # Generate response
                 stream = client.chat.completions.create(
                     model="gpt-4",
                     messages=messages,
@@ -429,4 +555,4 @@ with col2:
     if google_sheet and st.session_state.auto_saved:
         st.caption("✅ Data saved")
 with col3:
-    st.caption(f"Session: {st.session_state.conversation_id[:8]}...")
+    st.caption(f"Session: {st.session_state.conversation_id[:8]}...")v
