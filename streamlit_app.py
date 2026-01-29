@@ -5,25 +5,73 @@ from datetime import datetime
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-# Page configuration
+# Page configuration - Claude style
 st.set_page_config(
-    page_title="🚒 Community Risk Assessment Bot",
+    page_title="Community Risk Assessment",
     page_icon="🚒",
-    layout="centered",
+    layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# Hide sidebar completely with CSS
+# Custom CSS to make it look like Claude
 st.markdown("""
 <style>
+    /* Hide sidebar completely */
     [data-testid="collapsedControl"] {
-        display: none
+        display: none;
     }
     section[data-testid="stSidebar"] {
         display: none;
     }
+    
+    /* Main container - centered like Claude */
     .main {
-        padding-top: 2rem;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 2rem 1rem;
+    }
+    
+    /* Header styling */
+    h1 {
+        font-size: 1.5rem !important;
+        font-weight: 600 !important;
+        margin-bottom: 0.5rem !important;
+        color: #1f1f1f;
+    }
+    
+    /* Chat messages */
+    .stChatMessage {
+        padding: 1rem !important;
+        margin-bottom: 0.5rem !important;
+        border-radius: 8px !important;
+    }
+    
+    /* Input box */
+    .stChatInputContainer {
+        padding: 1rem 0 !important;
+    }
+    
+    /* Buttons */
+    .stButton button {
+        border-radius: 6px !important;
+        font-weight: 500 !important;
+        padding: 0.5rem 1rem !important;
+    }
+    
+    /* Hide Streamlit branding */
+    .stDeployButton {
+        display: none;
+    }
+    
+    footer {
+        visibility: hidden;
+    }
+    
+    /* Divider */
+    hr {
+        margin: 1.5rem 0;
+        border: none;
+        border-top: 1px solid #e5e5e5;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -144,37 +192,6 @@ CRITICAL RULES:
 TONE: Professional, educational, consultative."""
 
 # ============================================
-# Web Search Function
-# ============================================
-
-def web_search(query):
-    """
-    Perform web search using DuckDuckGo (no API key required)
-    Returns search results as formatted text
-    """
-    try:
-        from duckduckgo_search import DDGS
-        
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=5))
-            
-        if not results:
-            return "No search results found."
-        
-        formatted_results = f"### Web Search Results for: '{query}'\n\n"
-        for i, result in enumerate(results, 1):
-            formatted_results += f"**{i}. {result.get('title', 'No title')}**\n"
-            formatted_results += f"{result.get('body', 'No description')}\n"
-            formatted_results += f"Source: {result.get('href', 'No link')}\n\n"
-        
-        return formatted_results
-    
-    except ImportError:
-        return "⚠️ Web search not available. Install duckduckgo-search package."
-    except Exception as e:
-        return f"⚠️ Search error: {str(e)}"
-
-# ============================================
 # Report Generation
 # ============================================
 
@@ -253,91 +270,19 @@ if "identified_risks" not in st.session_state:
     st.session_state.identified_risks = []
 
 # ============================================
-# Header with Controls
+# Header - Claude Style
 # ============================================
 
-st.title("🚒 Community Risk Assessment AI Consultant")
-
-# File upload section
-uploaded_file = st.file_uploader(
-    "📎 Upload documents (optional)",
-    type=["pdf", "txt", "docx", "csv", "xlsx", "json"],
-    help="Upload relevant documents like strategic plans, inspection reports, or data files"
-)
-
-if uploaded_file:
-    if "uploaded_files" not in st.session_state:
-        st.session_state.uploaded_files = {}
-    
-    # Process uploaded file
-    file_content = uploaded_file.read()
-    file_name = uploaded_file.name
-    file_type = uploaded_file.type
-    
-    # Store file info
-    st.session_state.uploaded_files[file_name] = {
-        "content": file_content,
-        "type": file_type,
-        "name": file_name
-    }
-    
-    # Extract text based on file type
-    if file_type == "text/plain" or file_name.endswith('.txt'):
-        file_text = file_content.decode('utf-8')
-        st.success(f"✅ Uploaded: {file_name} ({len(file_text)} characters)")
-        
-        # Add to context
-        if "file_context" not in st.session_state:
-            st.session_state.file_context = ""
-        st.session_state.file_context += f"\n\n--- FILE: {file_name} ---\n{file_text}\n"
-    
-    elif file_type == "application/pdf" or file_name.endswith('.pdf'):
-        try:
-            import PyPDF2
-            from io import BytesIO
-            
-            pdf_reader = PyPDF2.PdfReader(BytesIO(file_content))
-            file_text = ""
-            for page in pdf_reader.pages:
-                file_text += page.extract_text()
-            
-            st.success(f"✅ Uploaded: {file_name} ({len(file_text)} characters)")
-            
-            if "file_context" not in st.session_state:
-                st.session_state.file_context = ""
-            st.session_state.file_context += f"\n\n--- FILE: {file_name} ---\n{file_text}\n"
-        except:
-            st.warning(f"⚠️ Could not extract text from PDF. Install PyPDF2 for PDF support.")
-    
-    elif file_name.endswith('.csv'):
-        import csv
-        from io import StringIO
-        
-        csv_text = file_content.decode('utf-8')
-        st.success(f"✅ Uploaded: {file_name}")
-        
-        if "file_context" not in st.session_state:
-            st.session_state.file_context = ""
-        st.session_state.file_context += f"\n\n--- FILE: {file_name} ---\n{csv_text}\n"
-    
-    else:
-        st.info(f"📄 Uploaded: {file_name} (Preview not available for this file type)")
-
-# Control buttons in header
-col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+col1, col2, col3 = st.columns([3, 1, 1])
 
 with col1:
-    # Web search toggle
-    if "web_search_enabled" not in st.session_state:
-        st.session_state.web_search_enabled = False
-    
-    web_search = st.checkbox("🔍 Enable Web Search", value=st.session_state.web_search_enabled)
-    st.session_state.web_search_enabled = web_search
+    st.title("Community Risk Assessment")
 
 with col2:
-    if len(st.session_state.messages) >= 5 and not st.session_state.report_generated:
-        if st.button("📝 Generate Report", use_container_width=True):
-            with st.spinner("Generating report..."):
+    # Generate Report button (only show when ready)
+    if len(st.session_state.messages) >= 5:
+        if st.button("📝 Report", use_container_width=True, type="primary"):
+            with st.spinner("Generating..."):
                 report = generate_cra_report(st.session_state.messages)
                 st.session_state.current_report = report
                 st.session_state.report_generated = True
@@ -358,17 +303,8 @@ with col2:
                 st.rerun()
 
 with col3:
-    if st.session_state.report_generated and st.session_state.current_report:
-        st.download_button(
-            label="📥 Download",
-            data=st.session_state.current_report,
-            file_name=f"CRA_{st.session_state.conversation_id}.md",
-            mime="text/markdown",
-            use_container_width=True
-        )
-
-with col4:
-    if st.button("🔄 New Chat", use_container_width=True):
+    # New Chat button
+    if st.button("🔄 New", use_container_width=True):
         # Save before clearing
         if google_sheet and len(st.session_state.messages) > 2 and not st.session_state.auto_saved:
             session_data = {
@@ -380,17 +316,12 @@ with col4:
             }
             save_conversation_to_sheets(google_sheet, session_data)
         
-        # Reset
-        st.session_state.messages = []
-        st.session_state.conversation_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-        st.session_state.user_info = {}
-        st.session_state.report_generated = False
-        st.session_state.current_report = None
-        st.session_state.auto_saved = False
-        st.session_state.identified_risks = []
+        # Reset all session state
+        st.session_state.clear()
         st.rerun()
 
-st.markdown("---")
+# Divider
+st.divider()
 
 # ============================================
 # Chat Interface
@@ -406,129 +337,41 @@ if st.session_state.report_generated and st.session_state.current_report:
     with st.expander("📊 Generated Report", expanded=True):
         st.markdown(st.session_state.current_report)
         
-        st.markdown("---")
+        st.divider()
         
-        # Report action buttons
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         
         with col1:
             st.download_button(
-                label="📥 Download MD",
+                label="📥 Download Report",
                 data=st.session_state.current_report,
                 file_name=f"CRA_{st.session_state.conversation_id}.md",
                 mime="text/markdown",
-                key="download_md",
                 use_container_width=True
             )
         
         with col2:
-            st.download_button(
-                label="📄 Download TXT",
-                data=st.session_state.current_report,
-                file_name=f"CRA_{st.session_state.conversation_id}.txt",
-                mime="text/plain",
-                key="download_txt",
-                use_container_width=True
-            )
-        
-        with col3:
-            if st.button("🔄 Regenerate", key="regenerate_btn", use_container_width=True):
-                with st.spinner("Regenerating report..."):
+            if st.button("🔄 Regenerate", use_container_width=True):
+                with st.spinner("Regenerating..."):
                     new_report = generate_cra_report(st.session_state.messages)
                     st.session_state.current_report = new_report
                     st.rerun()
-        
-        # Report modification interface
-        st.markdown("### 📝 Modify Report")
-        st.caption("Ask AI to adjust the report content")
-        
-        modification_request = st.text_area(
-            label="What would you like to change?",
-            placeholder="Example: Add more details about wildfire risks, or Make the executive summary shorter, or Focus more on senior safety concerns",
-            height=100,
-            key="mod_request"
-        )
-        
-        if st.button("✨ Modify Report", key="modify_btn", disabled=not modification_request):
-            with st.spinner("Modifying report..."):
-                try:
-                    # Create modification prompt
-                    modify_prompt = f"""You are modifying a Community Risk Assessment report.
-
-ORIGINAL REPORT:
-{st.session_state.current_report}
-
-USER REQUEST:
-{modification_request}
-
-Please generate an updated version of the report that incorporates the user's request while maintaining the professional format and structure. Keep the same markdown format with headers."""
-
-                    response = client.chat.completions.create(
-                        model="gpt-4",
-                        messages=[
-                            {"role": "system", "content": "You are an expert fire service consultant specializing in report writing."},
-                            {"role": "user", "content": modify_prompt}
-                        ],
-                        temperature=0.7,
-                        max_tokens=1500
-                    )
-                    
-                    # Update report
-                    st.session_state.current_report = response.choices[0].message.content
-                    
-                    # Save updated report
-                    if google_sheet:
-                        session_data = {
-                            "session_id": st.session_state.conversation_id,
-                            "user_info": st.session_state.user_info,
-                            "messages": st.session_state.messages,
-                            "report": st.session_state.current_report,
-                            "risks": st.session_state.identified_risks
-                        }
-                        save_conversation_to_sheets(google_sheet, session_data)
-                        st.session_state.auto_saved = True
-                    
-                    st.success("✅ Report modified successfully!")
-                    st.rerun()
-                    
-                except Exception as e:
-                    st.error(f"❌ Error modifying report: {str(e)}")
 
 # Chat input
-if prompt := st.chat_input("Type your message..."):
+if prompt := st.chat_input("Message Community Risk Assessment..."):
+    # Display user message
     with st.chat_message("user"):
         st.markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
     
+    # Generate assistant response
     with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
+        with st.spinner(""):
             try:
-                # Build messages with system prompt
                 messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-                
-                # Add file context if available
-                if "file_context" in st.session_state and st.session_state.file_context:
-                    file_context_msg = f"UPLOADED DOCUMENTS:\n{st.session_state.file_context}\n\nUse this information when relevant to the conversation."
-                    messages.append({"role": "system", "content": file_context_msg})
-                
-                # Add conversation history
                 for msg in st.session_state.messages[-20:]:
                     messages.append({"role": msg["role"], "content": msg["content"]})
                 
-                # Perform web search if enabled and query seems to need it
-                search_results = ""
-                if st.session_state.web_search_enabled:
-                    # Check if question might benefit from web search
-                    search_keywords = ["latest", "current", "recent", "new", "update", "news", "trend", "2024", "2025"]
-                    if any(keyword in prompt.lower() for keyword in search_keywords):
-                        with st.status("🔍 Searching the web...", expanded=False) as status:
-                            search_results = web_search(prompt)
-                            status.update(label="✅ Search complete", state="complete")
-                        
-                        if search_results and "No search results" not in search_results:
-                            messages.append({"role": "system", "content": f"WEB SEARCH RESULTS:\n{search_results}\n\nUse these search results to provide current, accurate information."})
-                
-                # Generate response
                 stream = client.chat.completions.create(
                     model="gpt-4",
                     messages=messages,
@@ -546,13 +389,6 @@ if prompt := st.chat_input("Type your message..."):
     st.session_state.messages.append({"role": "assistant", "content": response})
     st.rerun()
 
-# Footer
-st.markdown("---")
-col1, col2, col3 = st.columns([2, 1, 1])
-with col1:
-    st.caption("🚒 AI-Enhanced Community Risk Assessment | For Fire Service Professionals")
-with col2:
-    if google_sheet and st.session_state.auto_saved:
-        st.caption("✅ Data saved")
-with col3:
-    st.caption(f"Session: {st.session_state.conversation_id[:8]}...")
+# Minimal footer - Claude style
+st.divider()
+st.caption(f"Session: {st.session_state.conversation_id}")
